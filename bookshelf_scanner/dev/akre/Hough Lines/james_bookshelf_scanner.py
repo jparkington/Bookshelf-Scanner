@@ -2,6 +2,7 @@ import cv2
 import logging
 import numpy as np
 import pytesseract
+import duckdb
 
 from dataclasses import dataclass, field
 from pathlib     import Path
@@ -383,6 +384,29 @@ def ocr_spine(spine_image: np.ndarray, **params) -> str:
         logger.error(f"OCR failed: {e}")
         return ''
 
+#A function to store the found text in a database
+def store_ocr_result(db_path, image_name, ocr_text):
+    """
+    Stores the OCR result into the DuckDB database.
+
+    Args:
+        db_path (str): Path to the DuckDB file.
+        image_name (str): Name of the image being processed.
+        ocr_text (str): The extracted text from the image.
+    """
+    conn = duckdb.connect(db_path)
+    # Create the table if it doesn't exist
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ocr_results (
+            image_name TEXT,
+            ocr_text TEXT
+        )
+    """)
+    # Insert the OCR result
+    conn.execute("INSERT INTO ocr_results VALUES (?, ?)", (image_name, ocr_text))
+    conn.close()
+
+
 def draw_contours_and_text(
     image       : np.ndarray,
     ocr_image   : np.ndarray,
@@ -419,6 +443,10 @@ def draw_contours_and_text(
             ocr_text   = ocr_spine(ocr_region, **params)
 
             if ocr_text:
+                db_path = "bookshelf_scanner/data/found_books.duckdb"  # Path to the new database
+                store_ocr_result(db_path, f"{x}_{y}_{w}_{h}.jpg", ocr_text)
+                
+                #draw text on the annotated image
                 (text_width, text_height), _ = cv2.getTextSize(
                     text      = ocr_text,
                     fontFace  = cv2.FONT_HERSHEY_DUPLEX,
@@ -447,6 +475,7 @@ def draw_contours_and_text(
                     color     = (255, 255, 255),
                     thickness = 2
                 )
+            store_ocr_result("bookshelf_scanner/data/found_books.duckdb", image, ocr_text)
 
     return annotated
 
@@ -689,6 +718,8 @@ def interactive_experiment(
             handler.flush()
 
     cv2.destroyAllWindows()
+    
+
 
 # -------------------- Entry Point --------------------
 

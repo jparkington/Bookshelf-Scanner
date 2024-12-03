@@ -451,6 +451,52 @@ class TextExtractor:
 
         return annotated_image
 
+    #similar to below, but takes in segments returned by the segment() function , uses EasyOCR to extract the text
+    #then filters the results based on the confidence threshold (tbd by the user), then appends the text, bbox, and confidence to ocr_results list
+    def extract_text_from_segments(self, segments: list[dict], min_confidence: float = 0.3) -> list[dict]:
+        """
+        Extracts text from each segmented book spine using OCR.
+
+        Args:
+            segments (list[dict]): List of segments, each containing:
+                - 'image' (np.array): The segmented book image.
+                - 'bbox' (list[float]): Bounding box coordinates [x_min, y_min, x_max, y_max].
+                - 'confidence' (float): Confidence score of the detection.
+            min_confidence (float): Minimum confidence threshold for the OCR results.
+
+        Returns:
+            list[dict]: List of OCR results for each segment, each containing:
+                - 'text' (str): Extracted text from the book spine.
+                - 'bbox' (list[float]): Bounding box coordinates of the segment.
+                - 'confidence' (float): Confidence score of the OCR result.
+        """
+        ocr_results = []
+
+        for segment in segments:
+            image = segment['image']
+            try:
+                results = self.reader.readtext(
+                    image[..., ::-1],  # Convert BGR to RGB
+                    decoder='greedy',
+                    rotation_info=[90, 180, 270]
+                )
+
+                # Filter results by confidence and keep text only if it meets the threshold
+                filtered_results = [result for result in results if result[2] >= min_confidence]
+
+                if filtered_results:
+                    text, confidence = filtered_results[0][1], filtered_results[0][2]
+                    ocr_results.append({
+                        'text': text,
+                        'bbox': segment['bbox'],
+                        'confidence': confidence
+                    })
+
+            except Exception as e:
+                logger.error(f"OCR failed for segment: {e}")
+
+        return ocr_results
+    
     @cache
     def extract_text_from_image(
         self,

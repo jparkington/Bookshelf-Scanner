@@ -24,7 +24,7 @@ class BookSegmenter:
         """
         return self.yolo.check()
     
-    def segment(self, image: np.ndarray, use_masks: bool = True) -> list[dict]:
+    def segment(self, image: np.ndarray, use_masks: bool = True) -> tuple[list[np.ndarray], list[list[float]], list[float]]:
         """
         Segment Image into books.
 
@@ -33,13 +33,15 @@ class BookSegmenter:
             use_masks (bool): Whether to use the model's masks to black out the background.
 
         Returns:
-            list[dict]: List of segments, each containing:
-                - 'image' (np.array): The segmented book image.
-                - 'bbox' (list[float]): Bounding box coordinates [x_min, y_min, x_max, y_max].
-                - 'confidence' (float): Confidence score of the detection.
+            tuple: 
+                - List of segmented images (list[np.ndarray]).
+                - List of bounding box coordinates (list[list[float]]).
+                - List of confidence scores (list[float]).
         """
         detections, masks = self.yolo.detect_books(image)
         segments = []
+        bboxes = []
+        confidences = []
 
         for i, box in enumerate(detections):
             # Extract the segment using the bounding box coordinates
@@ -50,14 +52,12 @@ class BookSegmenter:
                 mask = masks[i][int(box[1]):int(box[3]), int(box[0]):int(box[2])]
                 segment = cv2.bitwise_and(segment, segment, mask=mask.astype(np.uint8))
             
-            # Append segment with bounding box and confidence
-            segments.append({
-                'image': segment,
-                'bbox': box[:4],
-                'confidence': box[4]
-            })
+            # Append the values to their respective lists
+            segments.append(segment)
+            bboxes.append(box[:4])
+            confidences.append(box[4])
 
-        return segments
+        return segments, bboxes, confidences
 
     
     def display_segmented_books(self, books, confidence):

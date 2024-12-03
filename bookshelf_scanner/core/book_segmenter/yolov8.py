@@ -2,7 +2,7 @@ import time
 import cv2
 import numpy as np
 import onnxruntime as ort
-from .utils import sigmoid, crop_mask
+from bookshelf_scanner.core.book_segmenter.utils import sigmoid, crop_mask
 
 class YOLO_model:
     """
@@ -56,37 +56,57 @@ class YOLO_model:
         prototypes = np.squeeze(output1)
         num_classes = predictions.shape[1] - 4 - prototypes.shape[0]
         assert num_classes == 1, "Only one class (book) is supported"
+
         # Extract the class predictions
         class_predictions = np.squeeze(predictions[:, 4:4+num_classes])
+
         # Extract the bounding box predictions
         bounding_boxes = predictions[:, :4]
+
         # Extract the prototype coefficients
         prototype_coefficients = predictions[:, 4+num_classes:]
+
         # Apply NMS to the bounding boxes
-        indices = cv2.dnn.NMSBoxes(bounding_boxes, class_predictions, self.confidence_threshold, self.iou_threshold)
+        indices = cv2.dnn.NMSBoxes(
+            bounding_boxes.tolist(), class_predictions.tolist(), 
+            self.confidence_threshold, self.iou_threshold
+        )
 
         # Extract the detections
         detections = []
         masks_in = []
         X_factor = self.image_width / 640
         Y_factor = self.image_height / 640
-        for i in indices.flatten():
-            box = bounding_boxes[i]
-            score = class_predictions[i]
-            class_id = 0
-            cx, cy, w, h = box
-            x1 = cx - w / 2
-            y1 = cy - h / 2
-            x2 = cx + w / 2
-            y2 = cy + h / 2
-            x1 = int(x1 * X_factor)
-            y1 = int(y1 * Y_factor)
-            x2 = int(x2 * X_factor)
-            y2 = int(y2 * Y_factor)
-            detections.append([x1, y1, x2, y2, score, class_id])
-            masks_in.append(prototype_coefficients[i])
+
+        # Check if indices is not empty
+        if isinstance(indices, (list, tuple)) and len(indices) > 0:
+            for i in indices:
+                # Handle the case where indices is a list of tuples or lists
+                if isinstance(i, (list, tuple)):
+                    i = i[0]  # Get the actual index from the tuple or list
+
+                box = bounding_boxes[i]
+                score = class_predictions[i]
+                class_id = 0
+
+                # Calculate bounding box coordinates
+                cx, cy, w, h = box
+                x1 = cx - w / 2
+                y1 = cy - h / 2
+                x2 = cx + w / 2
+                y2 = cy + h / 2
+
+                x1 = int(x1 * X_factor)
+                y1 = int(y1 * Y_factor)
+                x2 = int(x2 * X_factor)
+                y2 = int(y2 * Y_factor)
+
+                detections.append([x1, y1, x2, y2, score, class_id])
+                masks_in.append(prototype_coefficients[i])
+
         masks = self.process_mask_upsample(prototypes, masks_in, [detection[:4] for detection in detections])
         return detections, masks
+
 
     def process_mask(self, protos, masks_in, bboxes):
         """
@@ -104,25 +124,59 @@ class YOLO_model:
         masks = crop_mask(masks, bboxes)
         return masks > 0.5
         
+    #edited to convert masks_in to numpy array, which allows for use of .shape and matrix operations
     def process_mask_upsample(self, protos, masks_in, bboxes):
         """
-        Takes the output of the mask head, and applies the mask to the bounding boxes. This produces masks of higher
-        quality but is slower.
+        Takes the output of the mask head, and applies the mask to the bounding boxes.
+        This produces masks of higher quality but is slower.
 
         Args:
         protos (np.ndarray): [mask_dim, mask_h, mask_w]
         masks_in (np.ndarray): [n, mask_dim], n is number of masks after nms
-        bboxes (np.ndarray): [n, 4], n is number of masks after nms
-        shape (tuple): the size of the input image (h,w)
+        bboxes (list): [n, 4], n is number of masks after nms
 
         Returns:
         (np.ndarray): The upsampled masks.
         """
+        # Convert masks_in from list to NumPy array
+        masks_in = np.array(masks_in)
         c, mh, mw = protos.shape  # CHW
+
+        # Debug print statements
+        print("prototypes shape:", protos.shape)
+        print("masks_in shape:", masks_in.shape)
+
+        # Apply dot product and reshape
         masks = sigmoid(np.dot(masks_in, protos.reshape(c, -1))).reshape(-1, mh, mw)
-        masks = cv2.resize(masks.transpose(1, 2, 0), (self.image_width, self.image_height), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1)
+        print("masks shape before resize:", masks.shape)
+
+        # Resize the masks to match the input image dimensions
+        num_masks = masks.shape[0]
+        resized_masks = []
+        for i in range(num_masks):
+            resized_mask = cv2.resize(
+                masks[i], 
+                (self.image_width, self.image_height), 
+                interpolation=cv2.INTER_LINEAR
+            )
+            resized_masks.append(resized_mask)
+        
+        masks = np.array(resized_masks)
+        print("masks shape after resize:", masks.shape)
+
+        # Ensure that masks have the expected 3D shape (n, height, width)
+        if len(masks.shape) == 2:
+            masks = np.expand_dims(masks, axis=0)
+
+        print("masks shape after expanding dims:", masks.shape)
+
+        # Crop the masks using bounding boxes
         masks = crop_mask(masks, bboxes)  # CHW
         return masks > 0.5
+
+
+
+
         
     def draw_bboxes(self, image, detections):
         """
