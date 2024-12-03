@@ -17,6 +17,7 @@ opencv-python = "*"
 ruamel-yaml   = "*"
 rapidfuzz     = "^3.0.0"
 torch         = "*"
+streamlit = "^1.40.2"
 
 [tool.poetry.group.dev.dependencies]
 jupyter = "^1.1.1"
